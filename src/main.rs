@@ -3,7 +3,29 @@ use std::{env::temp_dir, fs::{File, create_dir_all}, path::Path};
 use actix_files::NamedFile;
 use actix_web::{HttpResponse, Responder, get, HttpServer, App, Result, web, error};
 use cloud_storage;
+use tracing::info;
 use std::io::Write;
+
+struct CloudStoragePath {
+    pub path: String
+}
+
+impl CloudStoragePath {
+    pub fn from(key: &str) -> CloudStoragePath {
+        CloudStoragePath { path: format!("uploads/{}", key) }
+    }
+
+    fn original_path(&self) -> String {
+        self.path.clone()
+    }
+
+    fn thumbnail_path(&self, width: u32, height: u32) -> String {
+        let path = std::path::Path::new(&(self.path));
+        let dir_path = path.parent().unwrap();
+        let filename = path.file_name().unwrap().to_str().unwrap();
+        format!("{}/{}x{}_{}", dir_path.display(), width, height, filename)
+    }
+}
 
 #[get("/orig/{key:.*}")]
 async fn original(path: web::Path::<(String,)>) -> Result<NamedFile> {
@@ -14,27 +36,41 @@ async fn original(path: web::Path::<(String,)>) -> Result<NamedFile> {
     Ok(NamedFile::from_file(file, &file_path)?)
 }
 
+async fn try_download_thumbnail(key: &str, width: u32, height: u32) -> Option<String> {
+    let cloud_storage_path = CloudStoragePath::from(&key);
+    let client = cloud_storage::Client::default();
+    let thumbnail_path = cloud_storage_path.thumbnail_path(width, height);
+
+    if let Ok(bytes) = client.object().download("autoreserve", &thumbnail_path).await {
+       return match save_file(&thumbnail_path, bytes) {
+           Ok(s) => Some(s),
+           Err(_) => None
+       }
+    }
+
+    None
+}
+
 #[get("/thumb/{width}x{height}/{key:.*}")]
 async fn thumb(path: web::Path::<(u32, u32, String)>) -> Result<NamedFile> {
     let (width, height, key) = path.into_inner();
+
+    if let Some(thumbnail_path) = try_download_thumbnail(&key, width, height).await {
+        return Ok(NamedFile::open(&thumbnail_path)?)
+    }
+
     let file_path = download_original(&key).await?;
 
     let img = image::open(&file_path).map_err (|e| error::ErrorInternalServerError(e) )?;
     let img = img.thumbnail(width, height);
     img.save(&file_path).map_err(|e| error::ErrorInternalServerError(e))?;
 
-
     let file = File::open(&file_path)?;
     Ok(NamedFile::from_file(file, &file_path)?)
 }
 
-async fn download_original(key: &str) -> Result<String, Box<dyn std::error::Error>> {
-    let key = format!("uploads/{}", key);
-
-    let client = cloud_storage::Client::default();
-    let bytes = client.object().download("autoreserve", &key).await?;
-
-    let file_path = format!("{}/{}", temp_dir().display(), key);
+fn save_file(path: &str, bytes: Vec<u8>) -> Result<String, Box<dyn std::error::Error>> {
+    let file_path = format!("{}/{}", temp_dir().display(), path);
     let dir_path = Path::new(&file_path).parent().unwrap();
     create_dir_all(dir_path)?;
 
@@ -42,6 +78,14 @@ async fn download_original(key: &str) -> Result<String, Box<dyn std::error::Erro
     file.write_all(&bytes)?;
 
     Ok(file_path)
+}
+
+async fn download_original(key: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let cloud_storage_path = CloudStoragePath::from(key);
+
+    let client = cloud_storage::Client::default();
+    let bytes = client.object().download("autoreserve", &cloud_storage_path.original_path()).await?;
+    save_file(key, bytes)
 }
 
 
