@@ -1721,12 +1721,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "thumber2"
+name = "thumbtaro"
 version = "0.1.0"
 dependencies = [
  "actix-files",
  "actix-web",
  "cloud-storage",
+ "dotenv",
  "env_logger",
  "image",
  "tracing",

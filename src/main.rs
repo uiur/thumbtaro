@@ -1,10 +1,11 @@
-use std::{env::temp_dir, fs::{File, create_dir_all}, path::Path};
+use std::{env::{temp_dir, self}, fs::{File, create_dir_all}, path::Path};
 
 use actix_files::NamedFile;
-use actix_web::{HttpResponse, Responder, get, HttpServer, App, Result, web, error};
+use actix_web::{get, HttpServer, App, Result, web, error};
 use cloud_storage;
-use tracing::info;
+
 use std::io::Write;
+use dotenv::dotenv;
 
 struct CloudStoragePath {
     pub path: String
@@ -12,7 +13,8 @@ struct CloudStoragePath {
 
 impl CloudStoragePath {
     pub fn from(key: &str) -> CloudStoragePath {
-        CloudStoragePath { path: format!("uploads/{}", key) }
+        let key_prefix = env::var("THUMBTARO_KEY_PREFIX").unwrap_or(String::from(""));
+        CloudStoragePath { path: format!("{}{}", key_prefix, key) }
     }
 
     fn original_path(&self) -> String {
@@ -41,7 +43,9 @@ async fn try_download_thumbnail(key: &str, width: u32, height: u32) -> Option<St
     let client = cloud_storage::Client::default();
     let thumbnail_path = cloud_storage_path.thumbnail_path(width, height);
 
-    if let Ok(bytes) = client.object().download("autoreserve", &thumbnail_path).await {
+
+    let bucket = env::var("THUMBTARO_BUCKET").expect("THUMBTARO_BUCKET must be specified");
+    if let Ok(bytes) = client.object().download(&bucket, &thumbnail_path).await {
        return match save_file(&thumbnail_path, bytes) {
            Ok(s) => Some(s),
            Err(_) => None
@@ -83,14 +87,17 @@ fn save_file(path: &str, bytes: Vec<u8>) -> Result<String, Box<dyn std::error::E
 async fn download_original(key: &str) -> Result<String, Box<dyn std::error::Error>> {
     let cloud_storage_path = CloudStoragePath::from(key);
 
+    let bucket = env::var("THUMBTARO_BUCKET").expect("THUMBTARO_BUCKET must be specified");
     let client = cloud_storage::Client::default();
-    let bytes = client.object().download("autoreserve", &cloud_storage_path.original_path()).await?;
+    let bytes = client.object().download(&bucket, &cloud_storage_path.original_path()).await?;
     save_file(key, bytes)
 }
 
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    dotenv().ok();
+
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::DEBUG)
         .with_test_writer()
