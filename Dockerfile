@@ -2,7 +2,7 @@ FROM ekidd/rust-musl-builder:stable as builder
 
 WORKDIR /app
 
-COPY . .
+ADD --chown=rust:rust . ./
 RUN cargo build --release
 
 FROM debian:buster-slim
