@@ -1,20 +1,26 @@
-use actix_web::{Responder, App, get, HttpResponse, Result, web, error};
-use std::{env::{temp_dir, self}, fs::{File, create_dir_all}, path::Path};
+use actix_web::{error, get, web, App, HttpResponse, Responder, Result};
+use std::{
+    env::{self, temp_dir},
+    fs::{create_dir_all, File},
+    path::Path,
+};
 
 use actix_files::NamedFile;
 use cloud_storage;
 
-use std::io::Write;
 use dotenv::dotenv;
+use std::io::Write;
 
 struct CloudStoragePath {
-    pub path: String
+    pub path: String,
 }
 
 impl CloudStoragePath {
     pub fn from(key: &str) -> CloudStoragePath {
         let key_prefix = env::var("THUMBTARO_KEY_PREFIX").unwrap_or(String::from(""));
-        CloudStoragePath { path: format!("{}{}", key_prefix, key) }
+        CloudStoragePath {
+            path: format!("{}{}", key_prefix, key),
+        }
     }
 
     fn original_path(&self) -> String {
@@ -30,10 +36,11 @@ impl CloudStoragePath {
 }
 
 #[get("/orig/{key:.*}")]
-pub async fn original(path: web::Path::<(String,)>) -> Result<NamedFile> {
+pub async fn original(path: web::Path<(String,)>) -> Result<NamedFile> {
     let key = path.into_inner().0;
-    let file_path = download_original(&key).await
-      .map_err(|e| error::ErrorNotFound(e))?;
+    let file_path = download_original(&key)
+        .await
+        .map_err(|e| error::ErrorNotFound(e))?;
 
     let file = File::open(&file_path)?;
     Ok(NamedFile::from_file(file, &file_path)?)
@@ -46,28 +53,29 @@ async fn try_download_thumbnail(key: &str, width: u32, height: u32) -> Option<St
 
     let bucket = env::var("THUMBTARO_BUCKET").expect("THUMBTARO_BUCKET must be specified");
     if let Ok(bytes) = client.object().download(&bucket, &thumbnail_path).await {
-       return match save_file(&thumbnail_path, bytes) {
-           Ok(s) => Some(s),
-           Err(_) => None
-       }
+        return match save_file(&thumbnail_path, bytes) {
+            Ok(s) => Some(s),
+            Err(_) => None,
+        };
     }
 
     None
 }
 
 #[get("/thumb/{width}x{height}/{key:.*}")]
-pub async fn thumb(path: web::Path::<(u32, u32, String)>) -> Result<NamedFile> {
+pub async fn thumb(path: web::Path<(u32, u32, String)>) -> Result<NamedFile> {
     let (width, height, key) = path.into_inner();
 
     if let Some(thumbnail_path) = try_download_thumbnail(&key, width, height).await {
-        return Ok(NamedFile::open(&thumbnail_path)?)
+        return Ok(NamedFile::open(&thumbnail_path)?);
     }
 
     let file_path = download_original(&key).await?;
 
-    let img = image::open(&file_path).map_err (|e| error::ErrorInternalServerError(e) )?;
+    let img = image::open(&file_path).map_err(|e| error::ErrorInternalServerError(e))?;
     let img = img.thumbnail(width, height);
-    img.save(&file_path).map_err(|e| error::ErrorInternalServerError(e))?;
+    img.save(&file_path)
+        .map_err(|e| error::ErrorInternalServerError(e))?;
 
     let file = File::open(&file_path)?;
     Ok(NamedFile::from_file(file, &file_path)?)
@@ -89,12 +97,14 @@ async fn download_original(key: &str) -> Result<String, Box<dyn std::error::Erro
 
     let bucket = env::var("THUMBTARO_BUCKET").expect("THUMBTARO_BUCKET must be specified");
     let client = cloud_storage::Client::default();
-    let bytes = client.object().download(&bucket, &cloud_storage_path.original_path()).await?;
+    let bytes = client
+        .object()
+        .download(&bucket, &cloud_storage_path.original_path())
+        .await?;
     save_file(key, bytes)
 }
 
 #[get("/")]
 pub async fn hello() -> impl Responder {
-  "hello"
+    "hello"
 }
-
